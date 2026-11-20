@@ -1,4 +1,4 @@
-// Final Approach - cockpit.js (v0.4.6)
+// Final Approach - cockpit.js (v0.4.7)
 // Cockpit rebuild: MODEL ONLY, no function yet. Built in metres.
 // Origin = captain's eyes, -z forward, +x right, +y up. Aircraft centreline is x = 0.5.
 //
@@ -11,7 +11,7 @@
 // In the game, tap NAMES (top right) then tap any part to see its name.
 //
 // Build order: 1 shell (done) > 2 glareshield (done) > 3 main panel + screens (done) > 4 yokes (done)
-//              > 5 centre pedestal > 6 overhead panel > 7 seats (+ sit/stand buttons), side consoles, details
+//              > 5 centre pedestal (done) > 6 overhead panel > 7 seats (+ sit/stand buttons), side consoles, details
 class Cockpit {
   constructor() {
     this.group = new THREE.Group();
@@ -39,11 +39,13 @@ class Cockpit {
       hub: this.mat(0x26292e),
       column: this.mat(0x2c2f35),
       apRed: this.mat(0x9a1e1e),
+      ped: this.mat(0x2c3036),
     };
     this.buildShell();
     this.buildGlareshield();
     this.buildMainPanel();
     this.buildYokes();
+    this.buildPedestal();
   }
 
   // Mostly emissive with a little diffuse shading, so the outdoor hemisphere light
@@ -284,6 +286,65 @@ class Cockpit {
       // Outboard horn: autopilot disconnect (red) and push-to-talk
       this.box(g, 0.02, 0.02, 0.01, apRed, out * 0.158, 0.1, 0.02, n + "AP_DISCONNECT_BUTTON");
       this.box(g, 0.02, 0.022, 0.012, btn, out * 0.167, 0.17, 0.027, n + "PTT_BUTTON");
+    });
+  }
+
+  // ---- PIECE 5: centre pedestal (thrust levers, speedbrake, flaps, fuel levers, trim wheels, CDUs) ----
+  // Engine 1 = left engine (x 0.45 lever), engine 2 = right engine (x 0.55 lever).
+  buildPedestal() {
+    const { ped, center, yoke, grip, btn, apRed, bezel, screen } = this.m;
+    const T = -0.64; // pedestal top surface
+    const G = this.group;
+    this.slab(0.28, 0.72, -1.15, T, -0.76, 0.25, ped, "PEDESTAL_BODY");
+    this.slab(0.28, 0.72, T, T + 0.008, -0.76, 0.25, center, "PEDESTAL_TOP");
+    this.slab(0.42, 0.58, T + 0.008, T + 0.011, -0.34, -0.18, bezel, "PEDESTAL_THRUST_LEVER_SLOT");
+
+    // Thrust levers: handle with TO/GA button on the front and A/T disconnect on the outboard side
+    [[1, 0.45, -1], [2, 0.55, 1]].forEach(([i, x, out]) => {
+      const p = "PEDESTAL_THRUST_LEVER_" + i;
+      this.rod(G, [x, T, -0.3], [x, -0.45, -0.24], 0.01, yoke, p);
+      this.box(G, 0.04, 0.05, 0.07, grip, x, -0.43, -0.24, p + "_HANDLE");
+      this.box(G, 0.025, 0.02, 0.006, btn, x, -0.43, -0.278, p + "_TOGA_BUTTON");
+      this.box(G, 0.008, 0.02, 0.02, apRed, x + out * 0.024, -0.43, -0.24, p + "_AT_DISCONNECT_BUTTON");
+      this.rod(G, [x, -0.56, -0.28], [x, -0.56, -0.35], 0.008, yoke, "PEDESTAL_REVERSE_THRUST_LEVER_" + i);
+    });
+
+    // Speedbrake lever (captain's side of the thrust levers) and flap lever (first officer's side)
+    this.rod(G, [0.395, T, -0.3], [0.395, -0.5, -0.24], 0.008, yoke, "PEDESTAL_SPEEDBRAKE_LEVER");
+    this.sphere(G, 0.018, grip, 0.395, -0.495, -0.238, "PEDESTAL_SPEEDBRAKE_KNOB");
+    this.rod(G, [0.605, T, -0.3], [0.605, -0.52, -0.24], 0.008, yoke, "PEDESTAL_FLAP_LEVER");
+    this.box(G, 0.03, 0.03, 0.04, grip, 0.605, -0.515, -0.238, "PEDESTAL_FLAP_LEVER_HANDLE");
+
+    // Engine fuel control levers (cutoff / idle) and parking brake
+    [[1, 0.46], [2, 0.54]].forEach(([i, x]) => {
+      this.rod(G, [x, T, -0.12], [x, -0.58, -0.1], 0.007, yoke, "PEDESTAL_FUEL_CONTROL_LEVER_" + i);
+      this.sphere(G, 0.014, grip, x, -0.575, -0.098, "PEDESTAL_FUEL_CONTROL_LEVER_" + i + "_KNOB");
+    });
+    this.rod(G, [0.6, T, 0.0], [0.6, -0.56, -0.02], 0.01, apRed, "PEDESTAL_PARKING_BRAKE_LEVER");
+
+    // Stabiliser trim wheels, one each side of the pedestal
+    [["CAPT", 0.28], ["FO", 0.72]].forEach(([who, x]) => {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.025, 20), grip);
+      w.rotation.z = Math.PI / 2; // axis along x
+      w.position.set(x, -0.66, -0.18);
+      G.add(w);
+      this.tag(w, "PEDESTAL_STAB_TRIM_WHEEL_" + who);
+    });
+
+    // Flight computer control display units (CDU): screen + keypad, tilted up toward the pilot
+    [["CAPT", 0.34], ["FO", 0.66]].forEach(([who, x]) => {
+      const n = "PEDESTAL_CDU_" + who + "_";
+      const g = new THREE.Group();
+      g.position.set(x, -0.62, -0.38);
+      g.rotation.x = -0.5;
+      G.add(g);
+      this.tag(g, n + "ASSEMBLY");
+      this.box(g, 0.12, 0.17, 0.04, bezel, 0, 0, 0, n + "BODY");
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.07), screen.clone());
+      s.position.set(0, 0.04, 0.0205);
+      g.add(s);
+      this.tag(s, n + "SCREEN");
+      this.box(g, 0.105, 0.075, 0.008, btn, 0, -0.035, 0.024, n + "KEYPAD");
     });
   }
 
