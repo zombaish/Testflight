@@ -1,5 +1,5 @@
 // Final Approach - main.js
-const VERSION = "0.4.4";
+const VERSION = "0.4.5";
 document.getElementById("ver").textContent = "v" + VERSION;
 
 // --- Scene ---
@@ -109,6 +109,7 @@ const endDrag = e => {
     const now = performance.now();
     if (now - lastTap < 350) { lookYaw = 0; lookPitch = 0; }
     lastTap = now;
+    if (showNames) showPartName(e.clientX, e.clientY);
   }
 };
 el.addEventListener("pointerup", endDrag);
@@ -125,7 +126,7 @@ addEventListener("keydown", e => {
 addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 addEventListener("blur", () => { for (const k in keys) keys[k] = false; });
 
-// --- Walk mode: WALK button (or E) lets you move around the cockpit; turning it off returns you to the seat ---
+// --- Walk mode: WALK button (or E) turns free walking on/off. Off just stops you where you are. ---
 let walk = false, walkX = 0, walkZ = 0, joyX = 0, joyY = 0;
 const ui = (tag, css) => {
   const d = document.createElement(tag);
@@ -144,7 +145,7 @@ function toggleWalk() {
   walk = !walk;
   walkBtn.textContent = walk ? "WALK: ON" : "WALK";
   stick.style.display = walk ? "block" : "none";
-  if (!walk) { walkX = 0; walkZ = 0; joyX = 0; joyY = 0; } // back to the seat
+  if (!walk) { joyX = 0; joyY = 0; } // you stay where you are
 }
 walkBtn.addEventListener("click", () => { toggleWalk(); walkBtn.blur(); });
 
@@ -168,6 +169,28 @@ const endStick = e => {
 };
 stick.addEventListener("pointerup", endStick);
 stick.addEventListener("pointercancel", endStick);
+
+// --- NAMES: turn on, then tap any cockpit part to see its name (matches cockpit.parts) ---
+let showNames = false;
+const namesBtn = ui("button", "position:fixed;top:52px;right:8px;z-index:5;padding:8px 14px;font:14px monospace;color:#fff;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.5);border-radius:6px");
+namesBtn.textContent = "NAMES";
+const nameLabel = ui("div", "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:5;padding:6px 10px;font:14px monospace;color:#ffe27a;background:rgba(0,0,0,.65);border-radius:6px;pointer-events:none;display:none");
+namesBtn.addEventListener("click", () => {
+  showNames = !showNames;
+  namesBtn.textContent = showNames ? "NAMES: ON" : "NAMES";
+  if (!showNames) nameLabel.style.display = "none";
+  namesBtn.blur();
+});
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function showPartName(x, y) {
+  ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(cockpit.group.children, true)[0];
+  let o = hit && hit.object;
+  while (o && !o.name) o = o.parent;
+  nameLabel.textContent = o ? o.name : "";
+  nameLabel.style.display = o ? "block" : "none";
+}
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
