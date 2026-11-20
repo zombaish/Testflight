@@ -1,5 +1,5 @@
 // Final Approach - main.js
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 document.getElementById("ver").textContent = "v" + VERSION;
 
 // --- Scene ---
@@ -7,9 +7,9 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87b8e8);
 scene.fog = new THREE.Fog(0x87b8e8, 3000, 14000);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 30000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 30000);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
@@ -56,6 +56,24 @@ for (let i = -8; i <= 8; i++) {
 // --- Flight model (see flight.js) ---
 const flight = new Flight();
 const hud = document.getElementById("hud");
+hud.style.display = "none"; // tap the version label to toggle this debug readout
+document.getElementById("ver").onclick = () => {
+  hud.style.display = hud.style.display === "none" ? "" : "none";
+};
+
+// --- Pilot rig: moves with the aircraft; the camera (eyes) and cockpit sit inside it ---
+const rig = new THREE.Object3D();
+scene.add(rig);
+rig.add(camera);
+const cockpit = new Cockpit();
+rig.add(cockpit.group);
+
+function setFov() {
+  camera.fov = innerWidth < innerHeight ? 85 : 65; // wider in portrait
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+setFov();
 
 let last = performance.now();
 function loop(now) {
@@ -63,8 +81,9 @@ function loop(now) {
   last = now;
   flight.step(dt);
   if (flight.y <= 0) flight.reset(); // temporary: restart on touchdown
-  camera.position.set(flight.x, flight.y + 4, flight.z);
-  camera.rotation.x = flight.pitch;
+  rig.position.set(flight.x, flight.y + 4, flight.z);
+  rig.rotation.x = flight.pitch;
+  cockpit.update(flight);
   hud.textContent = flight.hudText();
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
@@ -72,7 +91,6 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 addEventListener("resize", () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
+  setFov();
   renderer.setSize(innerWidth, innerHeight);
 });
