@@ -1,5 +1,5 @@
 // Final Approach - main.js
-const VERSION = "0.4.3";
+const VERSION = "0.4.4";
 document.getElementById("ver").textContent = "v" + VERSION;
 
 // --- Scene ---
@@ -118,19 +118,77 @@ const keys = {};
 addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if (k === "c") { lookYaw = 0; lookPitch = 0; }
+  if (k === "e" && !e.repeat) toggleWalk();
   keys[k] = true;
   if (k.startsWith("arrow")) e.preventDefault();
 });
 addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 addEventListener("blur", () => { for (const k in keys) keys[k] = false; });
 
+// --- Walk mode: WALK button (or E) lets you move around the cockpit; turning it off returns you to the seat ---
+let walk = false, walkX = 0, walkZ = 0, joyX = 0, joyY = 0;
+const ui = (tag, css) => {
+  const d = document.createElement(tag);
+  d.style.cssText = css;
+  document.body.appendChild(d);
+  return d;
+};
+const walkBtn = ui("button", "position:fixed;top:8px;right:8px;z-index:5;padding:8px 14px;font:14px monospace;color:#fff;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.5);border-radius:6px");
+walkBtn.textContent = "WALK";
+const stick = ui("div", "position:fixed;left:24px;bottom:24px;z-index:5;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);touch-action:none;display:none");
+const nub = document.createElement("div");
+nub.style.cssText = "position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:rgba(255,255,255,.45);pointer-events:none";
+stick.appendChild(nub);
+
+function toggleWalk() {
+  walk = !walk;
+  walkBtn.textContent = walk ? "WALK: ON" : "WALK";
+  stick.style.display = walk ? "block" : "none";
+  if (!walk) { walkX = 0; walkZ = 0; joyX = 0; joyY = 0; } // back to the seat
+}
+walkBtn.addEventListener("click", () => { toggleWalk(); walkBtn.blur(); });
+
+let stickId = null;
+const moveStick = e => {
+  const r = stick.getBoundingClientRect(), R = 45;
+  let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  const d = Math.hypot(dx, dy);
+  if (d > R) { dx *= R / d; dy *= R / d; }
+  nub.style.transform = "translate(" + dx + "px," + dy + "px)";
+  joyX = dx / R; joyY = -dy / R; // up = forward
+};
+stick.addEventListener("pointerdown", e => {
+  if (stickId !== null) return;
+  stickId = e.pointerId; stick.setPointerCapture(e.pointerId); moveStick(e);
+});
+stick.addEventListener("pointermove", e => { if (e.pointerId === stickId) moveStick(e); });
+const endStick = e => {
+  if (e.pointerId !== stickId) return;
+  stickId = null; joyX = 0; joyY = 0; nub.style.transform = "";
+};
+stick.addEventListener("pointerup", endStick);
+stick.addEventListener("pointercancel", endStick);
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
 function updateLook(dt) {
   const r = 1.6 * dt; // keyboard turn speed, radians per second
-  if (keys.arrowleft || keys.a) lookYaw += r;
-  if (keys.arrowright || keys.d) lookYaw -= r;
-  if (keys.arrowup || keys.w) lookPitch += r;
-  if (keys.arrowdown || keys.s) lookPitch -= r;
+  if (keys.arrowleft || (!walk && keys.a)) lookYaw += r;
+  if (keys.arrowright || (!walk && keys.d)) lookYaw -= r;
+  if (keys.arrowup || (!walk && keys.w)) lookPitch += r;
+  if (keys.arrowdown || (!walk && keys.s)) lookPitch -= r;
   clampLook();
+
+  if (walk) { // WASD or the on-screen stick, relative to where you are looking
+    let fx = joyX + (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    let fy = joyY + (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
+    const mag = Math.hypot(fx, fy);
+    if (mag > 1) { fx /= mag; fy /= mag; }
+    const sp = 0.9 * dt, sy = Math.sin(lookYaw), cy = Math.cos(lookYaw);
+    walkX = clamp(walkX + (-sy * fy + cy * fx) * sp, -0.4, 1.4);
+    walkZ = clamp(walkZ + (-cy * fy - sy * fx) * sp, -0.35, 1.05);
+  }
+  camera.position.set(walkX, 0, walkZ);
   camera.rotation.set(lookPitch, lookYaw, 0);
 }
 
