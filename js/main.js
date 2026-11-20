@@ -1,5 +1,5 @@
 // Final Approach - main.js
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 document.getElementById("ver").textContent = "v" + VERSION;
 
 // --- Scene ---
@@ -53,19 +53,19 @@ for (let i = -8; i <= 8; i++) {
   scene.add(bar);
 }
 
-// --- Demo: fly down a 3 degree glide slope ---
-const GS = Math.tan(3 * Math.PI / 180);
-const START_Z = 5700, SPEED = 70; // m/s
-let z = START_Z;
-camera.rotation.x = -3 * Math.PI / 180;
+// --- Flight model (see flight.js) ---
+const flight = new Flight();
+const hud = document.getElementById("hud");
 
 let last = performance.now();
 function loop(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
-  z -= SPEED * dt;
-  if (z < 30) z = START_Z;
-  camera.position.set(0, z * GS, z);
+  flight.step(dt);
+  if (flight.y <= 0) flight.reset(); // temporary: restart on touchdown
+  camera.position.set(flight.x, flight.y + 4, flight.z);
+  camera.rotation.x = flight.pitch;
+  hud.textContent = flight.hudText();
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
