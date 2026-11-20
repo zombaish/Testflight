@@ -1,5 +1,5 @@
 // Final Approach - main.js
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 document.getElementById("ver").textContent = "v" + VERSION;
 
 // --- Scene ---

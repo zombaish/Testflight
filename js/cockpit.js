@@ -1,7 +1,7 @@
-// Final Approach - cockpit.js (v0.4.0)
+// Final Approach - cockpit.js (v0.4.3)
 // Cockpit rebuild: MODEL ONLY, no function yet. Built in metres.
 // Origin = captain's eyes, -z forward, +x right, +y up. Aircraft centreline is x = 0.5.
-// Build order: 1 shell (done) > 2 glareshield > 3 main panel + screens > 4 yokes
+// Build order: 1 shell (done) > 2 glareshield (done) > 3 main panel + screens > 4 yokes
 //              > 5 centre pedestal > 6 overhead panel > 7 seats, side consoles, details
 class Cockpit {
   constructor() {
@@ -11,13 +11,35 @@ class Cockpit {
       ceil: this.mat(0x8b929b),
       floor: this.mat(0x2a2d32),
       trim: this.mat(0x2e3238),
+      glare: this.mat(0x1f2227),
+      mcp: this.mat(0x30343b),
+      dispBg: new THREE.MeshBasicMaterial({ color: 0x050505 }),
+      dispOn: new THREE.MeshBasicMaterial({ color: 0xc87810 }),
+      knob: this.mat(0x9aa0a8),
+      btn: this.mat(0x5a606a),
+      fire: new THREE.MeshBasicMaterial({ color: 0x7a1a1a }),
+      caution: new THREE.MeshBasicMaterial({ color: 0x7a5410 }),
     };
     this.buildShell();
+    this.buildGlareshield();
   }
 
-  // Lambert with some emissive so the interior isn't tinted by the outdoor hemisphere light
+  // Mostly emissive with a little diffuse shading, so the outdoor hemisphere light
+  // (green from the ground colour) doesn't tint the interior
   mat(color) {
-    return new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
+    return new THREE.MeshLambertMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.35),
+      emissive: color,
+      emissiveIntensity: 0.65,
+    });
+  }
+
+  // Box added to any parent, centred at x,y,z
+  box(parent, w, h, d, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
   }
 
   // Box from min/max corners (easier to line pieces up than centre + size)
@@ -80,6 +102,46 @@ class Cockpit {
     };
     sideFrame(L, L + d);
     sideFrame(R - d, R);
+  }
+
+  // ---- PIECE 2: glareshield (body, autopilot panel, warning lights) ----
+  buildGlareshield() {
+    const { glare, mcp, dispBg, dispOn, knob, btn, fire, caution } = this.m;
+    const CX = 0.5; // aircraft centreline
+
+    // Body: full width, top at y -0.07 (just under the window sills), 0.4 m deep
+    this.slab(-0.55, 1.55, -0.25, -0.07, -0.9, -0.5, glare);
+
+    // Autopilot panel (mode control panel): a block whose face tilts up toward the pilot
+    const tilt = -0.7; // radians
+    const panel = new THREE.Group();
+    panel.position.set(CX, -0.085, -0.78);
+    panel.rotation.x = tilt;
+    this.group.add(panel);
+    this.box(panel, 0.58, 0.1, 0.1, mcp, 0, 0, 0);
+    const FZ = 0.05; // face plane (local z)
+    for (let i = 0; i < 6; i++) {
+      const x = -0.25 + i * 0.1;
+      this.box(panel, 0.066, 0.028, 0.004, dispBg, x, 0.03, FZ + 0.002);   // display
+      this.box(panel, 0.05, 0.012, 0.002, dispOn, x, 0.03, FZ + 0.005);    // lit digits
+      const k = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.014, 16), knob);
+      k.rotation.x = Math.PI / 2;                                         // knob points at the pilot
+      k.position.set(x, 0.0, FZ + 0.007);
+      panel.add(k);
+      this.box(panel, 0.032, 0.012, 0.008, btn, x, -0.032, FZ + 0.004);    // button
+    }
+
+    // Warning lights: red fire warn + amber master caution, one pair each side of the panel
+    const lights = (x0, dir) => {
+      const g = new THREE.Group();
+      g.position.set(x0, -0.078, -0.72);
+      g.rotation.x = tilt;
+      this.group.add(g);
+      this.box(g, 0.05, 0.034, 0.012, fire, 0, 0, 0);
+      this.box(g, 0.05, 0.034, 0.012, caution, dir * 0.07, 0, 0);
+    };
+    lights(0.04, 1);          // captain: fire at x 0.04, caution at x 0.11
+    lights(0.96, -1);         // first officer: mirrored
   }
 
   // Model only for now; screens come alive in a later step
