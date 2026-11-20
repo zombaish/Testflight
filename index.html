@@ -11,13 +11,20 @@
   #hud { position: fixed; bottom: 12px; left: 12px; color: #7CFF7C; font: 14px monospace; white-space: pre; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 6px; }
 </style>
 </head>
-<!-- index.html v0.3.0 -->
+<!-- index.html v0.4.1 -->
 <body>
 <div id="ver"></div>
 <div id="hud"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="js/flight.js"></script>
-<script src="js/cockpit.js"></script>
-<script src="js/main.js"></script>
+<script>
+  // Cache-bust our own scripts on every load (GitHub Pages caches files for ~10 min)
+  const v = Date.now();
+  ["js/flight.js", "js/cockpit.js", "js/main.js"].forEach(src => {
+    const s = document.createElement("script");
+    s.src = src + "?v=" + v;
+    s.async = false; // keep execution in this order
+    document.body.appendChild(s);
+  });
+</script>
 </body>
 </html>
