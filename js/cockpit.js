@@ -1,4 +1,4 @@
-// Final Approach - cockpit.js (v0.4.5)
+// Final Approach - cockpit.js (v0.4.6)
 // Cockpit rebuild: MODEL ONLY, no function yet. Built in metres.
 // Origin = captain's eyes, -z forward, +x right, +y up. Aircraft centreline is x = 0.5.
 //
@@ -6,9 +6,11 @@
 //   cockpit.parts["MCP_HEADING_KNOB"]  -> that mesh. Use these when adding functions.
 // Pattern: AREA_THING_TYPE  (MCP_ALT_HOLD_BUTTON, DISPLAY_PFD_CAPT, GLARE_FIRE_WARN_CAPT_LIGHT).
 // CAPT = captain (left seat, x about 0), FO = first officer (right seat, x about 1).
+// Lights, display digits and screens each have their OWN material (part.material), so each
+// one can glow / change colour on its own later, e.g. parts["GEAR_LIGHT_NOSE"].material.color.set(0x00ff40).
 // In the game, tap NAMES (top right) then tap any part to see its name.
 //
-// Build order: 1 shell (done) > 2 glareshield (done) > 3 main panel + screens (done) > 4 yokes
+// Build order: 1 shell (done) > 2 glareshield (done) > 3 main panel + screens (done) > 4 yokes (done)
 //              > 5 centre pedestal > 6 overhead panel > 7 seats (+ sit/stand buttons), side consoles, details
 class Cockpit {
   constructor() {
@@ -32,10 +34,16 @@ class Cockpit {
       center: this.mat(0x3a3e45),
       screen: new THREE.MeshBasicMaterial({ color: 0x07090c }),
       gearOn: new THREE.MeshBasicMaterial({ color: 0x1f7a2a }),
+      yoke: this.mat(0x1c1e22),
+      grip: this.mat(0x121316),
+      hub: this.mat(0x26292e),
+      column: this.mat(0x2c2f35),
+      apRed: this.mat(0x9a1e1e),
     };
     this.buildShell();
     this.buildGlareshield();
     this.buildMainPanel();
+    this.buildYokes();
   }
 
   // Mostly emissive with a little diffuse shading, so the outdoor hemisphere light
@@ -69,6 +77,24 @@ class Cockpit {
   // Box from min/max corners (easier to line pieces up than centre + size), added to the cockpit
   slab(x0, x1, y0, y1, z0, z1, mat, name) {
     return this.box(this.group, x1 - x0, y1 - y0, z1 - z0, mat, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, name);
+  }
+
+  // Cylinder between two points (in the parent's space)
+  rod(parent, p0, p1, r, mat, name) {
+    const a = new THREE.Vector3(...p0), b = new THREE.Vector3(...p1);
+    const dir = b.clone().sub(a), len = dir.length();
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    parent.add(m);
+    return this.tag(m, name);
+  }
+
+  sphere(parent, r, mat, x, y, z, name) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return this.tag(m, name);
   }
 
   // ---- PIECE 1: shell (floor, ceiling, walls, window openings + frames) ----
@@ -162,7 +188,7 @@ class Cockpit {
     cols.forEach(([id, kind], i) => {
       const x = -0.25 + i * 0.1;
       this.box(panel, 0.066, 0.028, 0.004, dispBg, x, 0.038, FZ + 0.002, "MCP_" + id + "_DISPLAY");
-      this.box(panel, 0.05, 0.012, 0.002, dispOn, x, 0.038, FZ + 0.005, "MCP_" + id + "_DISPLAY_DIGITS");
+      this.box(panel, 0.05, 0.012, 0.002, dispOn.clone(), x, 0.038, FZ + 0.005, "MCP_" + id + "_DISPLAY_DIGITS");
       const k = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.014, 16), knob);
       k.rotation.x = Math.PI / 2;                       // knob points at the pilot
       k.position.set(x, 0.008, FZ + 0.007);
@@ -180,8 +206,8 @@ class Cockpit {
       g.rotation.x = tilt;
       this.group.add(g);
       this.tag(g, "GLARE_WARNING_LIGHTS_" + who);
-      this.box(g, 0.05, 0.034, 0.012, fire, 0, 0, 0, "GLARE_FIRE_WARN_" + who + "_LIGHT");
-      this.box(g, 0.05, 0.034, 0.012, caution, dir * 0.07, 0, 0, "GLARE_MASTER_CAUTION_" + who + "_LIGHT");
+      this.box(g, 0.05, 0.034, 0.012, fire.clone(), 0, 0, 0, "GLARE_FIRE_WARN_" + who + "_LIGHT");
+      this.box(g, 0.05, 0.034, 0.012, caution.clone(), dir * 0.07, 0, 0, "GLARE_MASTER_CAUTION_" + who + "_LIGHT");
     };
     lights(0.04, 1, "CAPT");
     lights(0.96, -1, "FO");
@@ -207,7 +233,7 @@ class Cockpit {
     const FACE = 0.025;
     [["PFD_CAPT", -0.03], ["ND_CAPT", 0.26], ["ND_FO", 0.74], ["PFD_FO", 1.03]].forEach(([id, x]) => {
       this.box(p, 0.285, 0.285, 0.012, bezel, x, 0, FACE + 0.006, "DISPLAY_" + id + "_BEZEL");
-      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), screen);
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), screen.clone());
       s.position.set(x, 0, FACE + 0.0125);
       p.add(s);
       this.tag(s, "DISPLAY_" + id);
@@ -216,12 +242,49 @@ class Cockpit {
     // Centre unit between the pilots: standby display (ISFD) + landing gear lights
     this.box(p, 0.18, 0.5, 0.02, center, CX, 0, 0.035, "PANEL_CENTER_UNIT");
     this.box(p, 0.11, 0.11, 0.004, bezel, CX, 0.12, 0.0455, "DISPLAY_STANDBY_ISFD_BEZEL");
-    const sm = new THREE.Mesh(new THREE.PlaneGeometry(0.095, 0.095), screen);
+    const sm = new THREE.Mesh(new THREE.PlaneGeometry(0.095, 0.095), screen.clone());
     sm.position.set(CX, 0.12, 0.0485);
     p.add(sm);
     this.tag(sm, "DISPLAY_STANDBY_ISFD");
     [["LEFT", -0.04], ["NOSE", 0], ["RIGHT", 0.04]].forEach(([n, dx]) =>
-      this.box(p, 0.028, 0.03, 0.008, gearOn, CX + dx, -0.02, 0.049, "GEAR_LIGHT_" + n));
+      this.box(p, 0.028, 0.03, 0.008, gearOn.clone(), CX + dx, -0.02, 0.049, "GEAR_LIGHT_" + n));
+  }
+
+  // ---- PIECE 4: control columns + yokes (captain x = 0, first officer x = 1) ----
+  buildYokes() {
+    const { yoke, grip, hub, column, btn, apRed } = this.m;
+    [["CAPT", 0.0, -1], ["FO", 1.0, 1]].forEach(([who, x, out]) => { // out = which side is outboard
+      const n = "YOKE_" + who + "_";
+
+      // Column: from the floor, leaning toward the pilot, up to the yoke hub
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.05, 16), column);
+      base.position.set(x, -1.125, -0.585);
+      this.group.add(base);
+      this.tag(base, n + "COLUMN_BASE");
+      this.rod(this.group, [x, -1.12, -0.585], [x, -0.58, -0.41], 0.025, column, n + "COLUMN");
+
+      // Yoke: hub + two horns, plane tilted up toward the pilot's face
+      const g = new THREE.Group();
+      g.position.set(x, -0.55, -0.4);
+      g.rotation.x = -0.25;
+      this.group.add(g);
+      this.tag(g, n + "ASSEMBLY");
+      this.box(g, 0.11, 0.075, 0.07, hub, 0, 0, 0, n + "HUB");
+      [-1, 1].forEach(s => {
+        const side = s < 0 ? "LEFT" : "RIGHT";
+        this.rod(g, [s * 0.05, 0, 0], [s * 0.15, 0.04, 0], 0.014, yoke, n + "ARM_" + side);
+        this.sphere(g, 0.016, yoke, s * 0.15, 0.04, 0, n + "ELBOW_" + side);
+        this.rod(g, [s * 0.15, 0.04, 0], [s * 0.168, 0.2, 0], 0.015, yoke, n + "HORN_" + side);
+        this.rod(g, [s * 0.165, 0.12, 0], [s * 0.168, 0.215, 0], 0.021, grip, n + "GRIP_" + side);
+      });
+
+      // Switches. Hub face: the two stabiliser trim switches (both must move to trim).
+      this.box(g, 0.03, 0.018, 0.008, btn, -0.025, 0, 0.039, n + "TRIM_SWITCH_A");
+      this.box(g, 0.03, 0.018, 0.008, btn, 0.025, 0, 0.039, n + "TRIM_SWITCH_B");
+      // Outboard horn: autopilot disconnect (red) and push-to-talk
+      this.box(g, 0.02, 0.02, 0.01, apRed, out * 0.158, 0.1, 0.02, n + "AP_DISCONNECT_BUTTON");
+      this.box(g, 0.02, 0.022, 0.012, btn, out * 0.167, 0.17, 0.027, n + "PTT_BUTTON");
+    });
   }
 
   // Model only for now; screens come alive in a later step
