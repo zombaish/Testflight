@@ -1,4 +1,4 @@
-// Final Approach - cockpit.js (v0.4.7)
+// Final Approach - cockpit.js (v0.5.1)
 // Cockpit rebuild: MODEL ONLY, no function yet. Built in metres.
 // Origin = captain's eyes, -z forward, +x right, +y up. Aircraft centreline is x = 0.5.
 //
@@ -8,14 +8,21 @@
 // CAPT = captain (left seat, x about 0), FO = first officer (right seat, x about 1).
 // Lights, display digits and screens each have their OWN material (part.material), so each
 // one can glow / change colour on its own later, e.g. parts["GEAR_LIGHT_NOSE"].material.color.set(0x00ff40).
+// LIGHTING (v0.5.1): cockpit.setNight(0..1) dims the interior surfaces; each light/display/screen
+//   glows from its dim "off" colour to a bright "on" colour:
+//   cockpit.setGlow("GEAR_LIGHT_NOSE", 1)  -> one light fully on;  cockpit.setGlowAll(1) -> every light on (demo).
 // In the game, tap NAMES (top right) then tap any part to see its name.
 //
 // Build order: 1 shell (done) > 2 glareshield (done) > 3 main panel + screens (done) > 4 yokes (done)
-//              > 5 centre pedestal (done) > 6 overhead panel > 7 seats (+ sit/stand buttons), side consoles, details
+//              > 5 centre pedestal (done) > 6 overhead panel (done) > 7 seats + sit/stand + collisions (done) > 8 side consoles, radio panels, pedals, door, details (done) = MODEL COMPLETE
 class Cockpit {
   constructor() {
     this.group = new THREE.Group();
     this.parts = {}; // name -> mesh/group
+    this.colliders = []; // floor-plan boxes the walking player cannot enter: {name, x0, x1, z0, z1}
+    this.seats = [];     // {name, x, z}: where the eyes are when sitting
+    this.interior = [];  // {mat, base}: surfaces dimmed by setNight()
+    this.glow = [];      // parts that can glow (see setupGlow)
     this.m = {
       wall: this.mat(0x6f7782),
       ceil: this.mat(0x8b929b),
@@ -40,22 +47,37 @@ class Cockpit {
       column: this.mat(0x2c2f35),
       apRed: this.mat(0x9a1e1e),
       ped: this.mat(0x2c3036),
+      ohBody: this.mat(0x2b2e34),
+      ohPlate: this.mat(0x3a3f47),
+      seat: this.mat(0x464a52),
+      seatDark: this.mat(0x24262a),
+      door: this.mat(0x5c636d),
+      domeLight: new THREE.MeshBasicMaterial({ color: 0x6a6a62 }),
     };
     this.buildShell();
     this.buildGlareshield();
     this.buildMainPanel();
     this.buildYokes();
     this.buildPedestal();
+    this.buildOverhead();
+    this.buildSeats();
+    this.buildPedestalAft();
+    this.buildConsoles();
+    this.buildDetails();
+    this.buildColliders();
+    this.setupGlow();
   }
 
   // Mostly emissive with a little diffuse shading, so the outdoor hemisphere light
   // (green from the ground colour) doesn't tint the interior
   mat(color) {
-    return new THREE.MeshLambertMaterial({
+    const m = new THREE.MeshLambertMaterial({
       color: new THREE.Color(color).multiplyScalar(0.35),
       emissive: color,
       emissiveIntensity: 0.65,
     });
+    this.interior.push({ mat: m, base: 0.65 });
+    return m;
   }
 
   // Give a part its unique name and register it in this.parts
@@ -346,6 +368,234 @@ class Cockpit {
       this.tag(s, n + "SCREEN");
       this.box(g, 0.105, 0.075, 0.008, btn, 0, -0.035, 0.024, n + "KEYPAD");
     });
+  }
+
+  // One group of controls on a panel plate. dir: -1 = face points down (overhead), +1 = face points up (pedestal top).
+  // items: [name, kind, hasLight]; kind: sw (toggle, default), knob, guard (guarded switch), handle (fire handle), display
+  section(g, dir, prefix, id, cx, cz, w, d, cols, items, lightMat) {
+    const { btn, knob, apRed, ohPlate, dispOn } = this.m;
+    const pre = prefix + id + "_";
+    const Y0 = dir * 0.026;
+    const y = h => Y0 + dir * h; // centre height of a part h tall sitting on the plate
+    this.box(g, w, 0.006, d, ohPlate, cx, dir * 0.023, cz, pre + "PLATE");
+    const rows = [];
+    for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
+    const rowSp = d / rows.length, colSp = w / cols;
+    rows.forEach((row, r) => row.forEach(([name, kind, light], c) => {
+      const x = cx + (c - (row.length - 1) / 2) * colSp;
+      const z = cz + (r - (rows.length - 1) / 2) * rowSp;
+      const nm = pre + name;
+      if (kind === "knob") {
+        const k = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.024, 16), knob);
+        k.position.set(x, y(0.012), z + 0.008);
+        g.add(k);
+        this.tag(k, nm);
+      } else if (kind === "guard") {
+        this.box(g, 0.026, 0.024, 0.026, apRed, x, y(0.012), z + 0.008, nm);
+      } else if (kind === "handle") {
+        this.box(g, 0.044, 0.03, 0.03, apRed, x, y(0.015), z + 0.008, nm);
+      } else if (kind === "display") {
+        this.box(g, 0.07, 0.01, 0.026, dispOn.clone(), x, y(0.005), z, nm);
+      } else {
+        this.box(g, 0.018, 0.03, 0.018, btn, x, y(0.015), z + 0.008, nm);
+      }
+      if (light) {
+        const ln = pre + name.replace(/_(SWITCH|KNOB|HANDLE|BUTTON)$/, "") + "_LIGHT";
+        this.box(g, 0.026, 0.006, 0.012, lightMat.clone(), x, y(0.003), z - 0.02, ln);
+      }
+    }));
+  }
+
+  // ---- PIECE 6: overhead panel (tilted from the ceiling, 11 sections of switches, knobs, handles + lights) ----
+  // Names: OH_<SECTION>_<THING>, e.g. OH_FUEL_PUMP_L_FWD_SWITCH with its light OH_FUEL_PUMP_L_FWD_LIGHT.
+  buildOverhead() {
+    const { btn, knob, apRed, fire, caution, ohBody, ohPlate } = this.m;
+    const g = new THREE.Group();
+    g.position.set(0.5, 0.54, -0.64);
+    g.rotation.x = 0.4; // front edge up at the ceiling, pilot edge hangs lower
+    this.group.add(g);
+    this.tag(g, "OVERHEAD_PANEL");
+    this.box(g, 0.9, 0.04, 0.52, ohBody, 0, 0, 0, "OVERHEAD_BODY");
+    const Y0 = -0.026; // face of the section plates (local y, pointing down)
+
+    const section = (...a) => this.section(g, -1, "OH_", ...a);
+    const L = true; // shorthand: this item has a light
+
+    // Row 1 (front, next to the windshield)
+    section("ELEC", -0.30, -0.17, 0.28, 0.14, 3, [
+      ["BATTERY_SWITCH"], ["STANDBY_POWER_SWITCH"], ["GEN_1_SWITCH", "sw", L],
+      ["GEN_2_SWITCH", "sw", L], ["APU_GEN_1_SWITCH", "sw", L], ["APU_GEN_2_SWITCH", "sw", L]], caution);
+    section("FUEL", -0.01, -0.17, 0.28, 0.14, 4, [
+      ["PUMP_L_FWD_SWITCH", "sw", L], ["PUMP_L_AFT_SWITCH", "sw", L], ["PUMP_R_AFT_SWITCH", "sw", L], ["PUMP_R_FWD_SWITCH", "sw", L],
+      ["PUMP_CTR_L_SWITCH", "sw", L], ["PUMP_CTR_R_SWITCH", "sw", L], ["CROSSFEED_SWITCH"]], caution);
+    section("HYD", 0.225, -0.17, 0.17, 0.14, 2, [
+      ["ENG_1_PUMP_SWITCH", "sw", L], ["ENG_2_PUMP_SWITCH", "sw", L],
+      ["ELEC_1_PUMP_SWITCH", "sw", L], ["ELEC_2_PUMP_SWITCH", "sw", L]], caution);
+    section("APU", 0.385, -0.17, 0.13, 0.14, 2, [["MASTER_SWITCH", "sw", L], ["START_SWITCH"]], caution);
+
+    // Row 2 (middle)
+    section("ENG", -0.30, 0.0, 0.28, 0.14, 3, [
+      ["START_1_KNOB", "knob"], ["IGNITION_SELECT_KNOB", "knob"], ["START_2_KNOB", "knob"]], caution);
+    section("AIR", -0.01, 0.0, 0.28, 0.14, 3, [
+      ["PACK_L_SWITCH", "sw", L], ["PACK_R_SWITCH", "sw", L], ["APU_BLEED_SWITCH", "sw", L],
+      ["BLEED_1_SWITCH", "sw", L], ["BLEED_2_SWITCH", "sw", L], ["ISOLATION_VALVE_SWITCH"]], caution);
+    section("ANTI_ICE", 0.225, 0.0, 0.17, 0.14, 3, [
+      ["ENG_1_SWITCH", "sw", L], ["WING_SWITCH", "sw", L], ["ENG_2_SWITCH", "sw", L]], caution);
+    section("SIGNS", 0.385, 0.0, 0.13, 0.14, 2, [["SEATBELT_SIGN_SWITCH"], ["NO_SMOKING_SWITCH"]], caution);
+
+    // Row 3 (pilot edge)
+    section("LIGHTS", -0.25, 0.17, 0.38, 0.14, 5, [
+      ["LANDING_L_SWITCH"], ["LANDING_R_SWITCH"], ["RUNWAY_TURNOFF_L_SWITCH"], ["RUNWAY_TURNOFF_R_SWITCH"], ["TAXI_SWITCH"],
+      ["STROBE_SWITCH"], ["POSITION_SWITCH"], ["LOGO_SWITCH"], ["WING_SWITCH"]], caution);
+    section("FIRE", 0.07, 0.17, 0.26, 0.14, 3, [
+      ["ENG_1_FIRE_HANDLE", "handle", L], ["APU_FIRE_HANDLE", "handle", L], ["ENG_2_FIRE_HANDLE", "handle", L],
+      ["FIRE_TEST_SWITCH"], ["BELL_CUTOUT_BUTTON"]], fire);
+    section("MISC", 0.31, 0.17, 0.26, 0.14, 3, [
+      ["EMER_EXIT_LIGHTS_SWITCH", "guard"], ["PASS_OXYGEN_SWITCH", "guard"], ["WINDOW_HEAT_SWITCH"]], caution);
+  }
+
+  // ---- PIECE 7: pilot seats (captain x = 0, first officer x = 1) + collision boxes ----
+  // Eyes sit at (seat x, 0, 0). Names: SEAT_<CAPT|FO>_<PART>.
+  buildSeats() {
+    const { seat, seatDark, column, btn, yoke } = this.m;
+    const G = this.group;
+    [["CAPT", 0.0], ["FO", 1.0]].forEach(([who, x]) => {
+      const n = "SEAT_" + who + "_";
+      this.seats.push({ name: who, x, z: 0 });
+      this.colliders.push({ name: n + "COLLIDER", x0: x - 0.27, x1: x + 0.27, z0: -0.22, z1: 0.4 });
+
+      this.box(G, 0.42, 0.03, 0.8, seatDark, x, -1.135, 0.12, n + "RAILS");
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.24, 16), column);
+      post.position.set(x, -1.0, 0.05);
+      G.add(post);
+      this.tag(post, n + "BASE_POST");
+      this.box(G, 0.46, 0.1, 0.48, seat, x, -0.83, 0.04, n + "CUSHION");
+      this.box(G, 0.46, 0.6, 0.09, seat, x, -0.48, 0.33, n + "BACKREST").rotation.x = 0.12;
+      this.box(G, 0.3, 0.18, 0.08, seat, x, -0.14, 0.37, n + "HEADREST").rotation.x = 0.12;
+      this.box(G, 0.05, 0.04, 0.28, seatDark, x - 0.245, -0.62, 0.1, n + "ARMREST_LEFT");
+      this.box(G, 0.05, 0.04, 0.28, seatDark, x + 0.245, -0.62, 0.1, n + "ARMREST_RIGHT");
+      this.rod(G, [x - 0.24, -0.86, -0.1], [x - 0.3, -0.86, -0.02], 0.008, yoke, n + "HEIGHT_ADJUST_LEVER");
+      this.box(G, 0.04, 0.01, 0.07, btn, x + 0.18, -0.775, 0.0, n + "SEATBELT_BUCKLE");
+    });
+  }
+
+  // Floor-plan collision boxes for the big solid things (seats add their own above)
+  buildColliders() {
+    this.colliders.push({ name: "PEDESTAL_COLLIDER", x0: 0.25, x1: 0.75, z0: -0.76, z1: 0.25 });
+    [0.0, 1.0].forEach((x, i) =>
+      this.colliders.push({ name: "YOKE_" + (i ? "FO" : "CAPT") + "_COLUMN_COLLIDER", x0: x - 0.05, x1: x + 0.05, z0: -0.62, z1: -0.38 }));
+  }
+
+  // ---- PIECE 8a: pedestal aft panels (radios, transponder, trim) on the pedestal top, behind the levers ----
+  buildPedestalAft() {
+    const g = new THREE.Group();
+    g.position.set(0.5, -0.652, 0.0); // plates sit on the pedestal top (y -0.632)
+    this.group.add(g);
+    this.tag(g, "PEDESTAL_AFT_PANELS");
+    const sec = (...a) => this.section(g, 1, "PEDESTAL_", ...a);
+    const radio = ["FREQ_DISPLAY", "display"], tune = ["FREQ_KNOB", "knob"];
+    sec("RADIO_COMM_1", -0.15, 0.10, 0.135, 0.085, 1, [radio, tune]);
+    sec("RADIO_COMM_2", 0.0, 0.10, 0.135, 0.085, 1, [radio, tune]);
+    sec("RADIO_NAV", 0.15, 0.10, 0.135, 0.085, 1, [radio, tune]);
+    sec("TRANSPONDER", -0.12, 0.19, 0.2, 0.085, 3, [["MODE_KNOB", "knob"], ["IDENT_BUTTON"], ["CODE_KNOB", "knob"]]);
+    sec("TRIM", 0.12, 0.19, 0.2, 0.085, 3, [["RUDDER_TRIM_KNOB", "knob"], ["AILERON_TRIM_SWITCH_A"], ["AILERON_TRIM_SWITCH_B"]]);
+  }
+
+  // ---- PIECE 8b: side consoles (captain left, first officer right) ----
+  buildConsoles() {
+    const { ped, center, grip, yoke, knob, bezel } = this.m;
+    const G = this.group;
+    [["CAPT", -0.55, -0.3, -1], ["FO", 1.3, 1.55, 1]].forEach(([who, x0, x1, side]) => {
+      const n = "CONSOLE_" + who + "_";
+      const cx = (x0 + x1) / 2, wallX = side < 0 ? -0.52 : 1.52;
+      this.slab(x0, x1, -1.15, -0.62, -0.45, 0.45, ped, n + "BODY");
+      this.slab(x0, x1, -0.62, -0.612, -0.45, 0.45, center, n + "TOP");
+      this.colliders.push({ name: n + "COLLIDER", x0, x1, z0: -0.45, z1: 0.45 });
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.03, 16), bezel);
+      cup.position.set(cx, -0.6, 0.3);
+      G.add(cup);
+      this.tag(cup, n + "CUP_HOLDER");
+      const ml = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 12), knob);
+      ml.position.set(cx, -0.605, 0.12);
+      G.add(ml);
+      this.tag(ml, n + "MAP_LIGHT_KNOB");
+      this.box(G, 0.025, 0.025, 0.025, bezel, cx, -0.612, 0.42, n + "HEADSET_JACK");
+      this.box(G, 0.06, 0.12, 0.14, bezel, wallX, -0.34, 0.16, n + "OXYGEN_MASK_BOX");
+      this.box(G, 0.03, 0.02, 0.06, this.m.btn, wallX, -0.095, -0.2, "WINDOW_SIDE_" + (side < 0 ? "LEFT" : "RIGHT") + "_LATCH");
+      if (who === "CAPT") { // nose wheel steering tiller
+        this.rod(G, [cx, -0.62, -0.15], [cx, -0.52, -0.1], 0.01, yoke, n + "TILLER_HANDLE");
+        this.sphere(G, 0.02, grip, cx, -0.51, -0.095, n + "TILLER_KNOB");
+      }
+    });
+  }
+
+  // ---- PIECE 8c: details (rudder pedals, door, ceiling lights, sun visors, extinguisher) ----
+  buildDetails() {
+    const { seatDark, door, bezel, btn, apRed, domeLight } = this.m;
+    const G = this.group;
+    [["CAPT", 0.0], ["FO", 1.0]].forEach(([who, x]) => {
+      ["LEFT", "RIGHT"].forEach((side, i) => {
+        this.box(G, 0.11, 0.17, 0.025, seatDark, x + (i ? 0.1 : -0.1), -0.98, -0.5, "RUDDER_PEDAL_" + who + "_" + side).rotation.x = -0.7;
+      });
+    });
+    // Cockpit door on the back wall
+    this.slab(0.12, 0.88, -1.15, 0.5, 1.17, 1.2, door, "COCKPIT_DOOR");
+    this.box(G, 0.1, 0.02, 0.03, btn, 0.78, -0.35, 1.155, "COCKPIT_DOOR_HANDLE");
+    this.box(G, 0.03, 0.03, 0.02, apRed, 0.78, -0.45, 1.16, "COCKPIT_DOOR_LOCK_KNOB");
+    const peep = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.01, 12), bezel);
+    peep.rotation.x = Math.PI / 2;
+    peep.position.set(0.5, 0.2, 1.165);
+    G.add(peep);
+    this.tag(peep, "COCKPIT_DOOR_PEEPHOLE");
+    // Ceiling lights (own materials so they can glow) and sun visors (stowed against the ceiling)
+    this.box(G, 0.14, 0.012, 0.09, domeLight.clone(), 0.5, 0.644, 0.35, "CEILING_DOME_LIGHT");
+    this.box(G, 0.05, 0.012, 0.05, domeLight.clone(), -0.05, 0.644, 0.1, "CEILING_MAP_LIGHT_CAPT");
+    this.box(G, 0.05, 0.012, 0.05, domeLight.clone(), 1.05, 0.644, 0.1, "CEILING_MAP_LIGHT_FO");
+    this.box(G, 0.4, 0.012, 0.28, seatDark, -0.15, 0.63, -0.62, "SUNVISOR_CAPT");
+    this.box(G, 0.4, 0.012, 0.28, seatDark, 1.15, 0.63, -0.62, "SUNVISOR_FO");
+    const fe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.3, 16), apRed);
+    fe.position.set(1.4, -1.0, 1.1);
+    G.add(fe);
+    this.tag(fe, "CABIN_FIRE_EXTINGUISHER");
+  }
+
+  // ---- LIGHTING: night dimming + glowing lights ----
+  // Find every light / lit display / screen (flat-colour parts) and give it an "on" colour to glow toward.
+  setupGlow() {
+    const pick = n => {
+      if (n.startsWith("CEILING_")) return 0xfff0cc;                 // dome + map lights: warm white
+      if (n.startsWith("GEAR_LIGHT_")) return 0x35ff55;              // gear lights: green
+      if (/FIRE_WARN|_FIRE_LIGHT/.test(n)) return 0xff3030;          // fire warning: red
+      if (n.endsWith("_LIGHT")) return 0xffb030;                     // annunciators, master caution: amber
+      if (n.endsWith("_DISPLAY_DIGITS") || n.endsWith("FREQ_DISPLAY")) return 0xffa020; // lit digits
+      if ((n.startsWith("DISPLAY_") && !n.endsWith("_BEZEL")) || n.endsWith("_SCREEN")) return 0x14384c; // screens: soft blue
+      return null;
+    };
+    for (const name of Object.keys(this.parts)) {
+      const part = this.parts[name], mat = part.material;
+      if (!mat || !mat.isMeshBasicMaterial) continue;
+      const hex = pick(name);
+      if (hex === null) continue;
+      part.userData.glow = { off: mat.color.clone(), on: new THREE.Color(hex) };
+      this.glow.push(part);
+    }
+  }
+
+  // 0 = day, 1 = night: dims the interior surfaces (lights are separate, see setGlow)
+  setNight(t) {
+    const level = 1 - 0.85 * t;
+    for (const i of this.interior) i.mat.emissiveIntensity = i.base * level;
+  }
+
+  // One light/display/screen: a = 0 (dim, off) .. 1 (fully glowing)
+  setGlow(name, a) {
+    const p = this.parts[name], g = p && p.userData.glow;
+    if (g) p.material.color.copy(g.off).lerp(g.on, a);
+  }
+
+  // Every light at once (used by the NIGHT demo)
+  setGlowAll(a) {
+    for (const p of this.glow) p.material.color.copy(p.userData.glow.off).lerp(p.userData.glow.on, a);
   }
 
   // Model only for now; screens come alive in a later step
